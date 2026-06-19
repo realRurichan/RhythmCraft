@@ -40,13 +40,13 @@ public class RhythmCraft {
 
     // Register Block & Item
     public static final RegistryObject<Block> BEATMANIA_ARCADE_BLOCK = BLOCKS.register("beatmania_arcade",
-            () -> new BeatmaniaArcadeBlock(AbstractBlock.Properties.of(Material.METAL).strength(2.0f).noOcclusion()));
+            () -> new BeatmaniaArcadeBlock(AbstractBlock.Properties.of(Material.METAL).strength(2.0f).noOcclusion().lightLevel((state) -> 15)));
 
     public static final RegistryObject<Item> BEATMANIA_ARCADE_ITEM = ITEMS.register("beatmania_arcade",
             () -> new BlockItem(BEATMANIA_ARCADE_BLOCK.get(), new Item.Properties().tab(CREATIVE_TAB)));
 
     public static final RegistryObject<Block> TAIKO_ARCADE_BLOCK = BLOCKS.register("taiko_arcade",
-            () -> new TaikoArcadeBlock(AbstractBlock.Properties.of(Material.METAL).strength(2.0f).noOcclusion()));
+            () -> new TaikoArcadeBlock(AbstractBlock.Properties.of(Material.METAL).strength(2.0f).noOcclusion().lightLevel((state) -> 15)));
 
     public static final RegistryObject<Item> TAIKO_ARCADE_ITEM = ITEMS.register("taiko_arcade",
             () -> new BlockItem(TAIKO_ARCADE_BLOCK.get(), new Item.Properties().tab(CREATIVE_TAB)));
