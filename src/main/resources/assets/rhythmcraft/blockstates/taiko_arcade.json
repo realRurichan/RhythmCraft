@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "rhythmcraft:block/taiko_arcade" },
+    "facing=south": { "model": "rhythmcraft:block/taiko_arcade", "y": 180 },
+    "facing=east": { "model": "rhythmcraft:block/taiko_arcade", "y": 90 },
+    "facing=west": { "model": "rhythmcraft:block/taiko_arcade", "y": 270 }
+  }
+}

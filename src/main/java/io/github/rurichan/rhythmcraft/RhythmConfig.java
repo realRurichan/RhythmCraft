@@ -27,6 +27,17 @@ public class RhythmConfig {
     public float scrollSpeed = 2.5f;
     public int audioDelay = 0; // ms
 
+    // Taiko no Tatsujin Configs
+    // index 0: Left Katsu, index 1: Left Don, index 2: Right Don, index 3: Right Katsu
+    public int[] taikoKeyBinds = new int[]{
+        GLFW.GLFW_KEY_D, // Left Katsu (Blue)
+        GLFW.GLFW_KEY_F, // Left Don (Red)
+        GLFW.GLFW_KEY_J, // Right Don (Red)
+        GLFW.GLFW_KEY_K  // Right Katsu (Blue)
+    };
+    public float taikoScrollSpeed = 2.0f;
+    public int taikoAudioDelay = 0; // ms
+
     private static RhythmConfig instance;
 
     public static RhythmConfig get() {
@@ -48,6 +59,18 @@ public class RhythmConfig {
                 instance = GSON.fromJson(reader, RhythmConfig.class);
                 if (instance == null) {
                     instance = new RhythmConfig();
+                }
+                // Fallbacks for Taiko settings if upgrading from older config version
+                if (instance.taikoKeyBinds == null || instance.taikoKeyBinds.length != 4) {
+                    instance.taikoKeyBinds = new int[]{
+                        GLFW.GLFW_KEY_D,
+                        GLFW.GLFW_KEY_F,
+                        GLFW.GLFW_KEY_J,
+                        GLFW.GLFW_KEY_K
+                    };
+                }
+                if (instance.taikoScrollSpeed <= 0) {
+                    instance.taikoScrollSpeed = 2.0f;
                 }
             } catch (Exception e) {
                 RhythmCraft.LOGGER.error("Failed to load RhythmCraft config, resetting to default", e);

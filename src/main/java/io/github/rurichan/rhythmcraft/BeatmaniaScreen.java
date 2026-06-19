@@ -92,7 +92,7 @@ public class BeatmaniaScreen extends Screen {
 
     private void scanSongs() {
         songs.clear();
-        File songsDir = new File(Minecraft.getInstance().gameDirectory, "rhythmcraft/songs");
+        File songsDir = new File(Minecraft.getInstance().gameDirectory, "rhythmcraft/beatmania");
         if (!songsDir.exists()) {
             songsDir.mkdirs();
         }
@@ -228,6 +228,10 @@ public class BeatmaniaScreen extends Screen {
             if (activeChart.bgmFile.exists()) {
                 if (activeChart.bgmFile.getName().toLowerCase().endsWith(".ogg")) {
                     bgmClip = loadOggToClip(activeChart.bgmFile);
+                } else if (activeChart.bgmFile.getName().toLowerCase().endsWith(".mp3")) {
+                    try (java.io.FileInputStream fis = new java.io.FileInputStream(activeChart.bgmFile)) {
+                        bgmClip = Mp3Decoder.loadMp3ToClip(fis);
+                    }
                 } else {
                     AudioInputStream audioIn = AudioSystem.getAudioInputStream(activeChart.bgmFile);
                     bgmClip = AudioSystem.getClip();
@@ -316,7 +320,7 @@ public class BeatmaniaScreen extends Screen {
         drawCenteredString(matrixStack, this.font, "RhythmCraft - Song Selection", this.width / 2, 15, 0x00FFCC);
 
         if (songs.isEmpty()) {
-            drawCenteredString(matrixStack, this.font, "No songs found in rhythmcraft/songs/", this.width / 2, 100, 0xFF0000);
+            drawCenteredString(matrixStack, this.font, "No songs found in rhythmcraft/beatmania/", this.width / 2, 100, 0xFF0000);
             return;
         }
 

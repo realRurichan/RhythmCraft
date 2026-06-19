@@ -155,8 +155,11 @@ public class BMSParser {
         chart.metadata = readMetadata(bmsFile);
         
         File oggFile = new File(bmsFile.getParentFile(), "bgm.ogg");
+        File mp3File = new File(bmsFile.getParentFile(), "bgm.mp3");
         if (oggFile.exists()) {
             chart.bgmFile = oggFile;
+        } else if (mp3File.exists()) {
+            chart.bgmFile = mp3File;
         } else {
             chart.bgmFile = new File(bmsFile.getParentFile(), "bgm.wav");
         }

@@ -45,6 +45,12 @@ public class RhythmCraft {
     public static final RegistryObject<Item> BEATMANIA_ARCADE_ITEM = ITEMS.register("beatmania_arcade",
             () -> new BlockItem(BEATMANIA_ARCADE_BLOCK.get(), new Item.Properties().tab(CREATIVE_TAB)));
 
+    public static final RegistryObject<Block> TAIKO_ARCADE_BLOCK = BLOCKS.register("taiko_arcade",
+            () -> new TaikoArcadeBlock(AbstractBlock.Properties.of(Material.METAL).strength(2.0f).noOcclusion()));
+
+    public static final RegistryObject<Item> TAIKO_ARCADE_ITEM = ITEMS.register("taiko_arcade",
+            () -> new BlockItem(TAIKO_ARCADE_BLOCK.get(), new Item.Properties().tab(CREATIVE_TAB)));
+
     public RhythmCraft() {
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
 
@@ -64,5 +70,6 @@ public class RhythmCraft {
     private void doClientStuff(final FMLClientSetupEvent event) {
         LOGGER.info("RhythmCraft client setup starting...");
         RenderTypeLookup.setRenderLayer(BEATMANIA_ARCADE_BLOCK.get(), RenderType.cutout());
+        RenderTypeLookup.setRenderLayer(TAIKO_ARCADE_BLOCK.get(), RenderType.cutout());
     }
 }
