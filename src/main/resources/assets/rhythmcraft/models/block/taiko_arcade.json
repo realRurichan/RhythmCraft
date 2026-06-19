@@ -80,6 +80,7 @@
     },
     {
       "name": "main_screen",
+      "shade": false,
       "from": [2.5, 14.5, 8.9],
       "to": [13.5, 25.5, 8.9],
       "faces": {
@@ -88,6 +89,7 @@
     },
     {
       "name": "marquee",
+      "shade": false,
       "from": [0, 28, 7],
       "to": [16, 32, 13],
       "faces": {
@@ -101,6 +103,7 @@
     },
     {
       "name": "left_lantern",
+      "shade": false,
       "from": [-2, 23, 8],
       "to": [0, 28, 10],
       "faces": {
@@ -114,6 +117,7 @@
     },
     {
       "name": "right_lantern",
+      "shade": false,
       "from": [16, 23, 8],
       "to": [18, 28, 10],
       "faces": {
