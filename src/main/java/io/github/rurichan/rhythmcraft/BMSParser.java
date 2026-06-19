@@ -9,6 +9,9 @@ import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.IResource;
+import net.minecraft.util.ResourceLocation;
 
 public class BMSParser {
 
@@ -25,6 +28,7 @@ public class BMSParser {
 
     public static class BMSMetadata {
         public File file;
+        public ResourceLocation resourceLocation;
         public String title = "Unknown Title";
         public String artist = "Unknown Artist";
         public double bpm = 130.0;
@@ -40,9 +44,14 @@ public class BMSParser {
                 case 4: name = "ANOTHER"; break;
                 case 5: name = "INSANE"; break;
                 default:
-                    String fName = file.getName();
+                    String fName = file != null ? file.getName() : (resourceLocation != null ? resourceLocation.getPath() : "");
+                    int lastSlash = fName.lastIndexOf('/');
+                    if (lastSlash != -1) {
+                        fName = fName.substring(lastSlash + 1);
+                    }
                     int dot = fName.lastIndexOf('.');
                     name = dot > 0 ? fName.substring(0, dot).toUpperCase() : fName.toUpperCase();
+                    if (name.isEmpty()) name = "CHART";
                     break;
             }
             return name + " [★" + playLevel + "]";
@@ -53,6 +62,7 @@ public class BMSParser {
         public BMSMetadata metadata;
         public List<Note> notes = new ArrayList<>();
         public File bgmFile = null;
+        public ResourceLocation bgmResourceLocation = null;
     }
 
     private static class RawLine {
@@ -164,11 +174,139 @@ public class BMSParser {
             chart.bgmFile = new File(bmsFile.getParentFile(), "bgm.wav");
         }
 
+        List<String> lines = readFileLines(bmsFile);
+        parseLines(chart, lines);
+        return chart;
+    }
+
+    public static List<String> readResourceLines(ResourceLocation loc) {
+        // 1. Try UTF-8
+        try {
+            return readResourceLinesWithCharset(loc, StandardCharsets.UTF_8);
+        } catch (Exception e1) {
+            // 2. Try Shift_JIS (Japanese)
+            try {
+                return readResourceLinesWithCharset(loc, Charset.forName("Shift_JIS"));
+            } catch (Exception e2) {
+                // 3. Try GBK (Chinese)
+                try {
+                    return readResourceLinesWithCharset(loc, Charset.forName("GBK"));
+                } catch (Exception e3) {
+                    // 4. Try MS949 (Korean)
+                    try {
+                        return readResourceLinesWithCharset(loc, Charset.forName("MS949"));
+                    } catch (Exception e4) {
+                        // 5. Fallback to System Default
+                        try {
+                            return readResourceLinesWithCharset(loc, Charset.defaultCharset());
+                        } catch (Exception e5) {
+                            return new ArrayList<>();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static List<String> readResourceLinesWithCharset(ResourceLocation loc, Charset charset) throws Exception {
+        List<String> lines = new ArrayList<>();
+        CharsetDecoder decoder = charset.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT);
+
+        IResource res = Minecraft.getInstance().getResourceManager().getResource(loc);
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(res.getInputStream(), decoder))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lines.add(line);
+            }
+        }
+        return lines;
+    }
+
+    public static BMSMetadata readResourceMetadata(ResourceLocation loc) {
+        BMSMetadata meta = new BMSMetadata();
+        meta.resourceLocation = loc;
+        List<String> lines = readResourceLines(loc);
+
+        for (String line : lines) {
+            line = line.trim();
+            if (!line.startsWith("#")) continue;
+            line = line.substring(1);
+
+            // Quick breakout if we hit actual note channels to avoid parsing the whole file
+            if (line.length() > 5 && Character.isDigit(line.charAt(0)) && Character.isDigit(line.charAt(1)) && Character.isDigit(line.charAt(2))) {
+                break;
+            }
+
+            String upper = line.toUpperCase();
+            if (upper.startsWith("TITLE ")) {
+                meta.title = line.substring(6).trim();
+            } else if (upper.startsWith("ARTIST ")) {
+                meta.artist = line.substring(7).trim();
+            } else if (upper.startsWith("BPM ")) {
+                try {
+                    meta.bpm = Double.parseDouble(line.substring(4).trim());
+                } catch (NumberFormatException ignored) {}
+            } else if (upper.startsWith("DIFFICULTY ")) {
+                try {
+                    meta.difficulty = Integer.parseInt(line.substring(11).trim());
+                } catch (NumberFormatException ignored) {}
+            } else if (upper.startsWith("PLAYLEVEL ")) {
+                try {
+                    meta.playLevel = Integer.parseInt(line.substring(10).trim());
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        return meta;
+    }
+
+    public static BMSChart parseResource(ResourceLocation loc) throws Exception {
+        BMSChart chart = new BMSChart();
+        chart.metadata = readResourceMetadata(loc);
+        
+        String path = loc.getPath();
+        int lastSlash = path.lastIndexOf('/');
+        if (lastSlash != -1) {
+            String parentDir = path.substring(0, lastSlash);
+            String namespace = loc.getNamespace();
+            
+            ResourceLocation oggLoc = new ResourceLocation(namespace, parentDir + "/bgm.ogg");
+            ResourceLocation mp3Loc = new ResourceLocation(namespace, parentDir + "/bgm.mp3");
+            ResourceLocation wavLoc = new ResourceLocation(namespace, parentDir + "/bgm.wav");
+            
+            net.minecraft.resources.IResourceManager rm = Minecraft.getInstance().getResourceManager();
+            boolean found = false;
+            try {
+                rm.getResource(oggLoc);
+                chart.bgmResourceLocation = oggLoc;
+                found = true;
+            } catch (java.io.FileNotFoundException e) {
+                // ignore
+            }
+            if (!found) {
+                try {
+                    rm.getResource(mp3Loc);
+                    chart.bgmResourceLocation = mp3Loc;
+                    found = true;
+                } catch (java.io.FileNotFoundException e) {
+                    // ignore
+                }
+            }
+            if (!found) {
+                chart.bgmResourceLocation = wavLoc; // fallback
+            }
+        }
+
+        List<String> lines = readResourceLines(loc);
+        parseLines(chart, lines);
+        return chart;
+    }
+
+    private static void parseLines(BMSChart chart, List<String> lines) {
         // Measure -> List of lines
         Map<Integer, List<RawLine>> measureData = new HashMap<>();
         Map<Integer, Double> measureLengths = new HashMap<>(); // Scale factor (default 1.0)
-
-        List<String> lines = readFileLines(bmsFile);
 
         for (String line : lines) {
             line = line.trim();
@@ -242,8 +380,6 @@ public class BMSParser {
 
         // Sort notes by timestamp
         chart.notes.sort(Comparator.comparingLong(n -> n.timestamp));
-
-        return chart;
     }
 
     private static int channelToLane(int channel) {

@@ -3,6 +3,7 @@ package io.github.rurichan.rhythmcraft;
 import com.mojang.blaze3d.matrix.MatrixStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.util.text.StringTextComponent;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.stb.STBVorbis;
@@ -11,9 +12,13 @@ import org.lwjgl.system.MemoryUtil;
 
 import javax.sound.sampled.*;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileWriter;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 public class BeatmaniaScreen extends Screen {
@@ -133,6 +138,63 @@ public class BeatmaniaScreen extends Screen {
                 }
             }
         }
+
+        // Scan Resource Packs
+        try {
+            Collection<ResourceLocation> resources = Minecraft.getInstance().getResourceManager().listResources("beatmania", (filename) -> filename.endsWith(".bms") || filename.endsWith(".bme"));
+            java.util.Map<String, List<ResourceLocation>> groups = new java.util.HashMap<>();
+            for (ResourceLocation res : resources) {
+                String path = res.getPath();
+                int lastSlash = path.lastIndexOf('/');
+                if (lastSlash != -1) {
+                    String folder = path.substring(0, lastSlash);
+                    groups.computeIfAbsent(folder, k -> new ArrayList<>()).add(res);
+                }
+            }
+
+            for (java.util.Map.Entry<String, List<ResourceLocation>> entry : groups.entrySet()) {
+                SongEntry song = new SongEntry();
+                for (ResourceLocation loc : entry.getValue()) {
+                    try {
+                        BMSParser.BMSMetadata meta = BMSParser.readResourceMetadata(loc);
+                        song.charts.add(meta);
+                    } catch (Exception e) {
+                        RhythmCraft.LOGGER.error("Failed to parse resource pack bms/bme chart: " + loc.toString(), e);
+                    }
+                }
+
+                if (!song.charts.isEmpty()) {
+                    // Deduplicate against existing songs (from local folders)
+                    boolean duplicate = false;
+                    for (SongEntry existing : songs) {
+                        if (existing.title.equalsIgnoreCase(song.charts.get(0).title) && existing.artist.equalsIgnoreCase(song.charts.get(0).artist)) {
+                            duplicate = true;
+                            // Add charts to existing
+                            for (BMSParser.BMSMetadata c : song.charts) {
+                                boolean chartDuplicate = false;
+                                for (BMSParser.BMSMetadata ec : existing.charts) {
+                                    if (ec.getDifficultyLabel().equalsIgnoreCase(c.getDifficultyLabel())) {
+                                        chartDuplicate = true;
+                                        break;
+                                    }
+                                }
+                                if (!chartDuplicate) existing.charts.add(c);
+                            }
+                            existing.charts.sort((c1, c2) -> Integer.compare(c1.playLevel, c2.playLevel));
+                            break;
+                        }
+                    }
+                    if (!duplicate) {
+                        song.charts.sort((c1, c2) -> Integer.compare(c1.playLevel, c2.playLevel));
+                        song.title = song.charts.get(0).title;
+                        song.artist = song.charts.get(0).artist;
+                        songs.add(song);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            RhythmCraft.LOGGER.error("Failed to scan resource pack bms/bme charts", e);
+        }
     }
 
     private void generateDemoSong(File songsDir) throws Exception {
@@ -210,9 +272,15 @@ public class BeatmaniaScreen extends Screen {
         }
     }
 
-    private void startSong(File bmsFile) {
+    private void startSong(BMSParser.BMSMetadata meta) {
         try {
-            activeChart = BMSParser.parse(bmsFile);
+            if (meta.file != null) {
+                activeChart = BMSParser.parse(meta.file);
+            } else if (meta.resourceLocation != null) {
+                activeChart = BMSParser.parseResource(meta.resourceLocation);
+            } else {
+                throw new IllegalArgumentException("BMSMetadata has no file or resourceLocation");
+            }
             combo = 0;
             maxCombo = 0;
             health = 22.0;
@@ -225,7 +293,7 @@ public class BeatmaniaScreen extends Screen {
             judgmentDisplayTicks = 0;
 
             // Load and Play BGM Clip
-            if (activeChart.bgmFile.exists()) {
+            if (activeChart.bgmFile != null && activeChart.bgmFile.exists()) {
                 if (activeChart.bgmFile.getName().toLowerCase().endsWith(".ogg")) {
                     bgmClip = loadOggToClip(activeChart.bgmFile);
                 } else if (activeChart.bgmFile.getName().toLowerCase().endsWith(".mp3")) {
@@ -238,12 +306,24 @@ public class BeatmaniaScreen extends Screen {
                     bgmClip.open(audioIn);
                 }
                 bgmClip.start();
+            } else if (activeChart.bgmResourceLocation != null) {
+                net.minecraft.resources.IResource res = Minecraft.getInstance().getResourceManager().getResource(activeChart.bgmResourceLocation);
+                if (activeChart.bgmResourceLocation.getPath().toLowerCase().endsWith(".ogg")) {
+                    bgmClip = loadOggToClipFromStream(res.getInputStream());
+                } else if (activeChart.bgmResourceLocation.getPath().toLowerCase().endsWith(".mp3")) {
+                    bgmClip = Mp3Decoder.loadMp3ToClip(res.getInputStream());
+                } else {
+                    AudioInputStream audioIn = AudioSystem.getAudioInputStream(res.getInputStream());
+                    bgmClip = AudioSystem.getClip();
+                    bgmClip.open(audioIn);
+                }
+                bgmClip.start();
             }
 
             startTime = System.currentTimeMillis();
             state = State.GAMEPLAY;
         } catch (Exception e) {
-            RhythmCraft.LOGGER.error("Failed to load song chart " + bmsFile.getName(), e);
+            RhythmCraft.LOGGER.error("Failed to load song chart: " + (meta.file != null ? meta.file.getName() : meta.resourceLocation.toString()), e);
         }
     }
 
@@ -278,6 +358,56 @@ public class BeatmaniaScreen extends Screen {
             clip.open(ais);
             return clip;
         }
+    }
+
+    private Clip loadOggToClipFromStream(InputStream is) throws Exception {
+        ByteBuffer vorbisBuffer = readInputStreamToDirectBuffer(is);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            java.nio.IntBuffer channelsBuffer = stack.mallocInt(1);
+            java.nio.IntBuffer sampleRateBuffer = stack.mallocInt(1);
+            java.nio.ShortBuffer rawAudio = STBVorbis.stb_vorbis_decode_memory(
+                vorbisBuffer, channelsBuffer, sampleRateBuffer
+            );
+            if (rawAudio == null) {
+                MemoryUtil.memFree(vorbisBuffer);
+                throw new RuntimeException("Failed to decode OGG memory stream");
+            }
+
+            int channels = channelsBuffer.get(0);
+            int sampleRate = sampleRateBuffer.get(0);
+
+            int numSamples = rawAudio.remaining();
+            byte[] pcmData = new byte[numSamples * 2];
+            for (int i = 0; i < numSamples; i++) {
+                short val = rawAudio.get(i);
+                pcmData[i * 2] = (byte) (val & 0xff);
+                pcmData[i * 2 + 1] = (byte) ((val >> 8) & 0xff);
+            }
+
+            MemoryUtil.memFree(rawAudio);
+            MemoryUtil.memFree(vorbisBuffer);
+
+            AudioFormat format = new AudioFormat(sampleRate, 16, channels, true, false);
+            ByteArrayInputStream bais = new ByteArrayInputStream(pcmData);
+            AudioInputStream ais = new AudioInputStream(bais, format, pcmData.length / format.getFrameSize());
+            Clip clip = AudioSystem.getClip();
+            clip.open(ais);
+            return clip;
+        }
+    }
+
+    private static ByteBuffer readInputStreamToDirectBuffer(InputStream is) throws Exception {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int bytesRead;
+        while ((bytesRead = is.read(buffer)) != -1) {
+            baos.write(buffer, 0, bytesRead);
+        }
+        byte[] bytes = baos.toByteArray();
+        ByteBuffer directBuf = MemoryUtil.memAlloc(bytes.length);
+        directBuf.put(bytes);
+        directBuf.flip();
+        return directBuf;
     }
 
     private void stopAudio() {
@@ -578,7 +708,7 @@ public class BeatmaniaScreen extends Screen {
                     if (!songs.isEmpty()) {
                         SongEntry currentSong = songs.get(selectedSongIndex);
                         if (selectedDifficultyIndex < currentSong.charts.size()) {
-                            startSong(currentSong.charts.get(selectedDifficultyIndex).file);
+                            startSong(currentSong.charts.get(selectedDifficultyIndex));
                         }
                     }
                     return true;
