@@ -19,7 +19,9 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class BeatmaniaScreen extends Screen {
 
@@ -45,6 +47,7 @@ public class BeatmaniaScreen extends Screen {
     // Gameplay data
     private BMSParser.BMSChart activeChart;
     private Clip bgmClip;
+    private final Map<String, Clip> keysoundClips = new HashMap<>();
     private long startTime;
     private int combo = 0;
     private int maxCombo = 0;
@@ -281,6 +284,7 @@ public class BeatmaniaScreen extends Screen {
             } else {
                 throw new IllegalArgumentException("BMSMetadata has no file or resourceLocation");
             }
+            preloadKeysounds(activeChart);
             combo = 0;
             maxCombo = 0;
             health = 22.0;
@@ -349,7 +353,7 @@ public class BeatmaniaScreen extends Screen {
                 pcmData[i * 2 + 1] = (byte) ((val >> 8) & 0xff);
             }
 
-            MemoryUtil.memFree(rawAudio);
+            org.lwjgl.system.libc.LibCStdlib.free(rawAudio);
 
             AudioFormat format = new AudioFormat(sampleRate, 16, channels, true, false);
             ByteArrayInputStream bais = new ByteArrayInputStream(pcmData);
@@ -384,7 +388,7 @@ public class BeatmaniaScreen extends Screen {
                 pcmData[i * 2 + 1] = (byte) ((val >> 8) & 0xff);
             }
 
-            MemoryUtil.memFree(rawAudio);
+            org.lwjgl.system.libc.LibCStdlib.free(rawAudio);
             MemoryUtil.memFree(vorbisBuffer);
 
             AudioFormat format = new AudioFormat(sampleRate, 16, channels, true, false);
@@ -416,6 +420,13 @@ public class BeatmaniaScreen extends Screen {
             bgmClip.close();
             bgmClip = null;
         }
+        for (Clip clip : keysoundClips.values()) {
+            try {
+                clip.stop();
+                clip.close();
+            } catch (Exception ignored) {}
+        }
+        keysoundClips.clear();
     }
 
     private long getPlayTime() {
@@ -509,12 +520,22 @@ public class BeatmaniaScreen extends Screen {
         }
         fill(matrixStack, startX + 172, 0, startX + 173, this.height, 0x33FFFFFF);
 
-        // 4. Draw falling notes
+        // 4. Draw falling notes / Play background keysounds
         float speed = RhythmConfig.get().scrollSpeed;
         boolean allNotesPassed = true;
 
         for (BMSParser.Note note : activeChart.notes) {
             if (note.hit) continue;
+
+            // Handle background keysounds automatically
+            if (note.lane < 0) {
+                long diffTime = note.timestamp - time;
+                if (diffTime <= 0) {
+                    note.hit = true;
+                    playKeysound(note.keysoundId);
+                }
+                continue;
+            }
 
             long diffTime = note.timestamp - time;
 
@@ -774,6 +795,18 @@ public class BeatmaniaScreen extends Screen {
             }
         }
 
+        // Play the keysound of the next unplayed note in this lane (if any)
+        BMSParser.Note nextNote = null;
+        for (BMSParser.Note note : activeChart.notes) {
+            if (!note.hit && note.lane == lane) {
+                nextNote = note;
+                break;
+            }
+        }
+        if (nextNote != null) {
+            playKeysound(nextNote.keysoundId);
+        }
+
         // Perform hit judgment
         if (targetNote != null && minDiff < 150) {
             targetNote.hit = true;
@@ -854,5 +887,147 @@ public class BeatmaniaScreen extends Screen {
     public void onClose() {
         stopAudio();
         super.onClose();
+    }
+
+    private void preloadKeysounds(BMSParser.BMSChart chart) {
+        for (Clip clip : keysoundClips.values()) {
+            try {
+                clip.stop();
+                clip.close();
+            } catch (Exception ignored) {}
+        }
+        keysoundClips.clear();
+
+        if (chart.metadata.wavMap.isEmpty()) return;
+
+        File parentDir = null;
+        if (chart.metadata.file != null) {
+            parentDir = chart.metadata.file.getParentFile();
+        }
+
+        for (Map.Entry<String, String> entry : chart.metadata.wavMap.entrySet()) {
+            String id = entry.getKey();
+            String origFilename = entry.getValue();
+
+            if (parentDir != null) {
+                File audioFile = resolveAudioFile(parentDir, origFilename);
+                if (audioFile != null && audioFile.exists()) {
+                    try {
+                        Clip clip = null;
+                        if (audioFile.getName().toLowerCase().endsWith(".ogg")) {
+                            clip = loadOggToClip(audioFile);
+                        } else if (audioFile.getName().toLowerCase().endsWith(".mp3")) {
+                            try (java.io.FileInputStream fis = new java.io.FileInputStream(audioFile)) {
+                                clip = Mp3Decoder.loadMp3ToClip(fis);
+                            }
+                        } else {
+                            AudioInputStream audioIn = AudioSystem.getAudioInputStream(audioFile);
+                            clip = AudioSystem.getClip();
+                            clip.open(audioIn);
+                        }
+                        if (clip != null) {
+                            keysoundClips.put(id, clip);
+                        }
+                    } catch (Exception e) {
+                        RhythmCraft.LOGGER.error("Failed to load keysound: " + origFilename, e);
+                    }
+                }
+            } else if (chart.metadata.resourceLocation != null) {
+                try {
+                    String path = chart.metadata.resourceLocation.getPath();
+                    int lastSlash = path.lastIndexOf('/');
+                    if (lastSlash != -1) {
+                        String folder = path.substring(0, lastSlash);
+                        String namespace = chart.metadata.resourceLocation.getNamespace();
+                        
+                        ResourceLocation audioLoc = resolveResourceAudioLocation(namespace, folder, origFilename);
+                        if (audioLoc != null) {
+                            net.minecraft.resources.IResource res = Minecraft.getInstance().getResourceManager().getResource(audioLoc);
+                            Clip clip = null;
+                            if (audioLoc.getPath().toLowerCase().endsWith(".ogg")) {
+                                clip = loadOggToClipFromStream(res.getInputStream());
+                            } else if (audioLoc.getPath().toLowerCase().endsWith(".mp3")) {
+                                clip = Mp3Decoder.loadMp3ToClip(res.getInputStream());
+                            } else {
+                                AudioInputStream audioIn = AudioSystem.getAudioInputStream(res.getInputStream());
+                                clip = AudioSystem.getClip();
+                                clip.open(audioIn);
+                            }
+                            if (clip != null) {
+                                keysoundClips.put(id, clip);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    RhythmCraft.LOGGER.error("Failed to load resource keysound: " + origFilename, e);
+                }
+            }
+        }
+    }
+
+    private File resolveAudioFile(File parentDir, String filename) {
+        File file = new File(parentDir, filename);
+        if (file.exists()) return file;
+
+        int dot = filename.lastIndexOf('.');
+        String baseName = dot > 0 ? filename.substring(0, dot) : filename;
+
+        File oggFile = new File(parentDir, baseName + ".ogg");
+        if (oggFile.exists()) return oggFile;
+
+        File mp3File = new File(parentDir, baseName + ".mp3");
+        if (mp3File.exists()) return mp3File;
+
+        File wavFile = new File(parentDir, baseName + ".wav");
+        if (wavFile.exists()) return wavFile;
+
+        return null;
+    }
+
+    private ResourceLocation resolveResourceAudioLocation(String namespace, String folder, String filename) {
+        net.minecraft.resources.IResourceManager rm = Minecraft.getInstance().getResourceManager();
+        
+        ResourceLocation exactLoc = new ResourceLocation(namespace, folder + "/" + filename);
+        try {
+            rm.getResource(exactLoc);
+            return exactLoc;
+        } catch (Exception ignored) {}
+
+        int dot = filename.lastIndexOf('.');
+        String baseName = dot > 0 ? filename.substring(0, dot) : filename;
+
+        ResourceLocation oggLoc = new ResourceLocation(namespace, folder + "/" + baseName + ".ogg");
+        try {
+            rm.getResource(oggLoc);
+            return oggLoc;
+        } catch (Exception ignored) {}
+
+        ResourceLocation mp3Loc = new ResourceLocation(namespace, folder + "/" + baseName + ".mp3");
+        try {
+            rm.getResource(mp3Loc);
+            return mp3Loc;
+        } catch (Exception ignored) {}
+
+        ResourceLocation wavLoc = new ResourceLocation(namespace, folder + "/" + baseName + ".wav");
+        try {
+            rm.getResource(wavLoc);
+            return wavLoc;
+        } catch (Exception ignored) {}
+
+        return null;
+    }
+
+    private void playKeysound(String keysoundId) {
+        if (keysoundId == null) return;
+        Clip clip = keysoundClips.get(keysoundId);
+        if (clip != null) {
+            try {
+                clip.stop();
+                clip.setFramePosition(0);
+                clip.start();
+            } catch (Exception e) {
+                RhythmCraft.LOGGER.error("Failed to play keysound " + keysoundId, e);
+            }
+        }
     }
 }

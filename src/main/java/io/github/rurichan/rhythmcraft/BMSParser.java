@@ -18,11 +18,13 @@ public class BMSParser {
     public static class Note {
         public final int lane; // 0-6 for keys, 7 for scratch
         public final long timestamp; // Milliseconds
+        public String keysoundId;
         public boolean hit = false;
 
-        public Note(int lane, long timestamp) {
+        public Note(int lane, long timestamp, String keysoundId) {
             this.lane = lane;
             this.timestamp = timestamp;
+            this.keysoundId = keysoundId;
         }
     }
 
@@ -34,6 +36,7 @@ public class BMSParser {
         public double bpm = 130.0;
         public int difficulty = 2; // 1: Beginner, 2: Normal, 3: Hyper, 4: Another, 5: Insane
         public int playLevel = 1;
+        public final Map<String, String> wavMap = new HashMap<>();
 
         public String getDifficultyLabel() {
             String name;
@@ -133,12 +136,20 @@ public class BMSParser {
             if (!line.startsWith("#")) continue;
             line = line.substring(1);
 
+            String upper = line.toUpperCase();
+            if (upper.startsWith("WAV")) {
+                if (line.length() > 6) {
+                    String id = line.substring(3, 5).toUpperCase();
+                    String filename = line.substring(6).trim();
+                    meta.wavMap.put(id, filename);
+                }
+                continue;
+            }
+
             // Quick breakout if we hit actual note channels to avoid parsing the whole file
             if (line.length() > 5 && Character.isDigit(line.charAt(0)) && Character.isDigit(line.charAt(1)) && Character.isDigit(line.charAt(2))) {
                 break;
             }
-
-            String upper = line.toUpperCase();
             if (upper.startsWith("TITLE ")) {
                 meta.title = line.substring(6).trim();
             } else if (upper.startsWith("ARTIST ")) {
@@ -234,12 +245,20 @@ public class BMSParser {
             if (!line.startsWith("#")) continue;
             line = line.substring(1);
 
+            String upper = line.toUpperCase();
+            if (upper.startsWith("WAV")) {
+                if (line.length() > 6) {
+                    String id = line.substring(3, 5).toUpperCase();
+                    String filename = line.substring(6).trim();
+                    meta.wavMap.put(id, filename);
+                }
+                continue;
+            }
+
             // Quick breakout if we hit actual note channels to avoid parsing the whole file
             if (line.length() > 5 && Character.isDigit(line.charAt(0)) && Character.isDigit(line.charAt(1)) && Character.isDigit(line.charAt(2))) {
                 break;
             }
-
-            String upper = line.toUpperCase();
             if (upper.startsWith("TITLE ")) {
                 meta.title = line.substring(6).trim();
             } else if (upper.startsWith("ARTIST ")) {
@@ -369,7 +388,7 @@ public class BMSParser {
                         if (!noteId.equals("00")) {
                             double offsetRatio = (double) i / numNotes;
                             long timestamp = (long) (currentPositionMs + offsetRatio * measureDuration);
-                            chart.notes.add(new Note(lane, timestamp));
+                            chart.notes.add(new Note(lane, timestamp, noteId.toUpperCase()));
                         }
                     }
                 }
@@ -384,6 +403,7 @@ public class BMSParser {
 
     private static int channelToLane(int channel) {
         switch (channel) {
+            case 1: return -2; // BGM keysound channel
             case 11: return 0; // Key 1
             case 12: return 1; // Key 2
             case 13: return 2; // Key 3

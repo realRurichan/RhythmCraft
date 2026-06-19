@@ -52,6 +52,8 @@ public class TaikoScreen extends Screen {
     // Gameplay data
     private OsuParser.OsuChart activeChart;
     private Clip bgmClip;
+    private Clip donClip;
+    private Clip katsuClip;
     private long startTime;
     private int combo = 0;
     private int maxCombo = 0;
@@ -79,6 +81,7 @@ public class TaikoScreen extends Screen {
     protected void init() {
         super.init();
         scanSongs();
+        initSoundEffects();
     }
 
     private void scanSongs() {
@@ -348,7 +351,7 @@ public class TaikoScreen extends Screen {
                 pcmData[i * 2 + 1] = (byte) ((val >> 8) & 0xff);
             }
 
-            MemoryUtil.memFree(rawAudio);
+            org.lwjgl.system.libc.LibCStdlib.free(rawAudio);
             MemoryUtil.memFree(vorbisBuffer);
 
             AudioFormat format = new AudioFormat(sampleRate, 16, channels, true, false);
@@ -379,6 +382,23 @@ public class TaikoScreen extends Screen {
             bgmClip.stop();
             bgmClip.close();
             bgmClip = null;
+        }
+    }
+
+    private void closeSoundEffects() {
+        if (donClip != null) {
+            try {
+                donClip.stop();
+                donClip.close();
+            } catch (Exception ignored) {}
+            donClip = null;
+        }
+        if (katsuClip != null) {
+            try {
+                katsuClip.stop();
+                katsuClip.close();
+            } catch (Exception ignored) {}
+            katsuClip = null;
         }
     }
 
@@ -769,11 +789,11 @@ public class TaikoScreen extends Screen {
         boolean isKatsu = (index == 0 || index == 3);
         long time = getPlayTime();
 
-        // Plays native SoundEvents based on hit type
+        // Plays custom high-quality drum sound effects
         if (isKatsu) {
-            Minecraft.getInstance().getSoundManager().play(SimpleSound.forUI(SoundEvents.NOTE_BLOCK_SNARE, 1.2f));
+            playKatsuSound();
         } else {
-            Minecraft.getInstance().getSoundManager().play(SimpleSound.forUI(SoundEvents.NOTE_BLOCK_BASEDRUM, 1.0f));
+            playDonSound();
         }
 
         // Process Note judgments
@@ -914,6 +934,104 @@ public class TaikoScreen extends Screen {
     @Override
     public void onClose() {
         stopAudio();
+        closeSoundEffects();
         super.onClose();
+    }
+
+    private void initSoundEffects() {
+        try {
+            closeSoundEffects();
+            donClip = generateDonClip();
+            katsuClip = generateKatsuClip();
+        } catch (Exception e) {
+            RhythmCraft.LOGGER.error("Failed to generate Taiko hitsounds", e);
+        }
+    }
+
+    private Clip generateDonClip() throws Exception {
+        int sampleRate = 44100;
+        double duration = 0.25;
+        int numSamples = (int) (duration * sampleRate);
+        byte[] data = new byte[numSamples * 4];
+
+        double phase = 0.0;
+        for (int i = 0; i < numSamples; i++) {
+            double time = (double) i / sampleRate;
+            double amp = Math.exp(-15.0 * time);
+            double freq = 60.0 + 90.0 * Math.exp(-30.0 * time);
+            phase += 2.0 * Math.PI * freq / sampleRate;
+            double val = Math.sin(phase) * 16384.0 * amp;
+            short sVal = (short) val;
+            // Left Channel
+            data[i * 4] = (byte) (sVal & 0xff);
+            data[i * 4 + 1] = (byte) ((sVal >> 8) & 0xff);
+            // Right Channel
+            data[i * 4 + 2] = (byte) (sVal & 0xff);
+            data[i * 4 + 3] = (byte) ((sVal >> 8) & 0xff);
+        }
+
+        AudioFormat format = new AudioFormat(sampleRate, 16, 2, true, false);
+        ByteArrayInputStream bais = new ByteArrayInputStream(data);
+        AudioInputStream ais = new AudioInputStream(bais, format, numSamples);
+        Clip clip = AudioSystem.getClip();
+        clip.open(ais);
+        return clip;
+    }
+
+    private Clip generateKatsuClip() throws Exception {
+        int sampleRate = 44100;
+        double duration = 0.15;
+        int numSamples = (int) (duration * sampleRate);
+        byte[] data = new byte[numSamples * 4];
+        java.util.Random rand = new java.util.Random();
+
+        double phase = 0.0;
+        for (int i = 0; i < numSamples; i++) {
+            double time = (double) i / sampleRate;
+            double amp = Math.exp(-25.0 * time);
+            double freq = 300.0 + 200.0 * Math.exp(-40.0 * time);
+            phase += 2.0 * Math.PI * freq / sampleRate;
+            double tone = Math.sin(phase);
+            double noise = rand.nextDouble() * 2.0 - 1.0;
+            double val = (0.7 * tone + 0.3 * noise) * 16384.0 * amp;
+            short sVal = (short) val;
+            // Left Channel
+            data[i * 4] = (byte) (sVal & 0xff);
+            data[i * 4 + 1] = (byte) ((sVal >> 8) & 0xff);
+            // Right Channel
+            data[i * 4 + 2] = (byte) (sVal & 0xff);
+            data[i * 4 + 3] = (byte) ((sVal >> 8) & 0xff);
+        }
+
+        AudioFormat format = new AudioFormat(sampleRate, 16, 2, true, false);
+        ByteArrayInputStream bais = new ByteArrayInputStream(data);
+        AudioInputStream ais = new AudioInputStream(bais, format, numSamples);
+        Clip clip = AudioSystem.getClip();
+        clip.open(ais);
+        return clip;
+    }
+
+    private void playDonSound() {
+        if (donClip != null) {
+            try {
+                donClip.stop();
+                donClip.setFramePosition(0);
+                donClip.start();
+            } catch (Exception e) {
+                RhythmCraft.LOGGER.error("Failed to play Don sound", e);
+            }
+        }
+    }
+
+    private void playKatsuSound() {
+        if (katsuClip != null) {
+            try {
+                katsuClip.stop();
+                katsuClip.setFramePosition(0);
+                katsuClip.start();
+            } catch (Exception e) {
+                RhythmCraft.LOGGER.error("Failed to play Katsu sound", e);
+            }
+        }
     }
 }
